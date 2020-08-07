@@ -1,0 +1,207 @@
+---
+title: "Guided Project: Exploring NYC Schools Survey Data"
+author: "Alasdair Schmidt"
+date: "June 17, 2020"
+output: html_notebook
+---
+In this project I will analyze data from the New York City school department to see how socio-economic factors influence performance (measured by average SAT scores). Parent, teacher and student perceptions of school success will also be analyzed and compared to socio-economic factors and performance. 
+
+The data used in this analysis was collected in 2011 and is publicly available and can be accessed [here](https://data.world/dataquest/nyc-schools-data) and [here](https://data.cityofnewyork.us/Education/2011-NYC-School-Survey/mnz3-dyi8).
+
+I should note that this project was completed using a guide created by Dataquest. The guided project can be found
+[here](https://www.dataquest.io/m/327-guided-project-nyc-schools-perceptions/).
+While this is a guided project, the following code is my own. 
+
+First, I'll install necessary packages:
+
+```{r}
+library(readr)
+library(purrr)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(tidyr)
+```
+
+These packages will help us import, clean, and visualize the data. 
+
+Now we will import the necessary data sets using elements of the readr package:
+
+```{r}
+NYC_combined <- read.csv("https://query.data.world/s/p3jjr3wedjwqfdsc2owyoiurj54i4x", header=TRUE)
+Gened_survey <- read.delim("masterfile11_gened_final.txt")
+Sped_survey <- read.delim("masterfile11_d75_final.txt")
+```
+
+In the provided data dictionary for the survey data, we can see that the dbn (district borough number) is included, so we can use this variable as a key when combining the data. The survey data is large, and contains details about survey questions that we will likely not use for this analysis. We will focus on the survey scores for each school calculated from responses, rather than specific survey responses. 
+
+The survey questions included assess four metrics:
+
+- Safety and Respect
+- Communication
+- Engagement
+- Academic Expectations
+
+The groups represented in the survey:
+
+- Parents
+- Teachers
+- Students
+- Total (an average of the three previous group scores)
+
+We will also omit observations in the general education survey that are not from high schools. Since the special education survey has significantly less observations and does not specify school type, we will keep all observations. 
+
+Here is the code used to simplify the data sets:
+
+```{r}
+Gened_survey2 <- Gened_survey %>%
+  filter(schooltype == "High School") %>%
+  select(dbn, schoolname, schooltype, saf_p_11:aca_tot_11) 
+
+Sped_survey2 <- Sped_survey %>%
+  select(dbn, schoolname, schooltype, saf_p_11:aca_tot_11)
+```
+
+
+Now we have two dataframes with nineteen variables as opposed to thousands. Next, we can combine these two data frames using bind_rows() in order to have all of our survey information in one dataframe.
+
+```{r}
+survey_all <- Gened_survey2 %>%
+  bind_rows(Sped_survey2)
+```
+
+In order to use the DBN (district borough number) variable as a key to join the survey and combined data frames, we need to make sure that they have the same name. 
+
+Converting 'dbn' to 'DBN' for survey_all
+
+```{r}
+survey_all <- survey_all %>%
+  rename(DBN = dbn)
+```
+
+Since our goal in anaylizing this data is to see how survey scores relate to the socio-economic factors and performance scores in the combined dataframe, I will choose to use left combine.
+
+This allows us to retain all of our survey data and pair it to matching observations in the combined dataframe.
+
+```{r}
+school_total <- survey_all %>%
+  left_join(NYC_combined, by = "DBN")
+```
+
+Now that we have all of our information in one dataframe, we can begin to analyze it. We can start with correlation matrix to explore how different variables may be related to perceptions of school quality. 
+
+```{r}
+cor_tib <- school_total %>%
+  select_if(is.numeric) %>%
+cor(use = "pairwise.complete.obs") %>%
+  as_tibble(rownames = "variable") 
+sat_cor <- cor_tib %>%
+  select(variable, avg_sat_score) %>%
+  filter( avg_sat_score > 0.25 | avg_sat_score < -0.25)
+  
+
+```
+
+
+This first tibble shows some interesting correlations between variables and average SAT scores for New York City schools. Notably, free lunch percentage has a moderate negative relationship with the average SAT score, suggesting that children who attend schools in poor areas and that in turn receive less funding are underperforming on standardized tests.
+
+```{r}
+asian_cor <- cor_tib %>%
+  select(variable, asian_per) %>%
+  filter(asian_per > 0.25 | asian_per < -0.25)
+black_cor <- cor_tib %>%
+  select(variable, black_per) %>%
+  filter(black_per > 0.10 | black_per < -0.25)
+hispanic_cor <- cor_tib %>%
+  select(variable, hispanic_per) %>%
+  filter(hispanic_per > 0.25 | hispanic_per < -0.25)
+white_cor <- cor_tib %>%
+  select(variable, white_per) %>%
+  filter(white_per > 0.25 | white_per < -0.25)
+```
+
+These tibbles show relationships between race (black, hispanic, asian, and white) and our other variables.
+
+We can see several interesting relationships in these tibbles, first that there are moderate negative relationships between the percentage of Black students and receiving high scores for the ACT and SAT. From this same tibble we can see that there is also a moderate negative relationship between the percentage of Black students and the total perceived safety of a school. This analysis supports the well established idea that Black students are under served in our school systems. 
+
+```{r}
+scatter_function <- function(x, y) {
+  ggplot(data = school_total,
+         aes_string(x = x, y = y)) +
+    geom_point(alpha = 0.3) +
+    theme(panel.background = element_rect(fill = "white"))
+}
+
+x_var <- sat_cor$variable[16:23]
+y_var <- "avg_sat_score"
+
+map2(x_var, y_var, scatter_function)  
+```
+
+
+These scatter plots provide us with a visual representation of what we found from our correlation analysis.
+
+Now let's take a look at another marker of academic success, graduation rate. The following will create a tibble with our variables and the graduation percent. 
+
+```{r}
+grad_cor <- cor_tib %>%
+  select(variable, grads_percent) %>%
+  filter(grads_percent > 0.25 | grads_percent < -0.25)
+
+x_var2 <- c(grad_cor$variable[5], grad_cor$variable[8], grad_cor$variable[10], grad_cor$variable[12:15], grad_cor$variable[17])
+y_var2 <- "grads_percent"
+
+map2(x_var2, y_var2, scatter_function)
+```
+
+It's interesting to see here that while there are certainly moderate correlations between these variables and graduation rate, there is more to be seen in the scatter plots. 
+
+As we would expect, we can see the strongest (negative) correlation between graduation rate and drop out rate. As a scatter plot, this is shown by the points forming a line with a negative slope. While we can see general correlation between other variables, their scatter plots have points that are more spread out or clustered, but not in a line. 
+
+Let's reshape our data set to get a better idea of differences between how parents, teachers and students answered survey questions.
+
+
+```{r}
+school_total_long <- school_total %>%
+  gather(key = "survey_question", value = score, saf_p_11:aca_tot_11)
+```
+
+Now we can create new variables from our "survey_question" variable. We can extract the question topic and group asked to create two new columns, "topic" and "group". 
+
+For example, saf_p_11 has the "topic" of safety (saf) and the group is parent (p).
+
+We can use mutate() and str_sub() to extract the information we need and create new variables. In order to rename the valuesd in our "group" variable, we can use mutate() again with ifelse() statements.
+
+```{r}
+school_total_long <- school_total_long %>%
+  mutate(group = str_sub(survey_question,4,6)) %>%
+  mutate(topic = str_sub(survey_question,1,3)) %>%
+  mutate(group = ifelse(group == "_p_", "parent",
+                        ifelse(group == "_t_", "teacher",
+                               ifelse(group == "_s_", "student",
+                                      ifelse(group == "_to", "total", "NA")))))
+```
+
+Time for some box plots so we can see the distribution of responses by group of responders.
+
+We can use filter to leave out values that hold the total responses from our 3 groups. Using ggplot, we can set our x-axis to be topic (question topic), our y-axis will show the score, and the plot will be filled in with our responders (group).
+
+```{r}
+school_total_long %>%
+  filter(group != "total") %>%
+  ggplot()+
+  aes(x = topic, y = score, fill = group) +
+  geom_boxplot()
+```
+
+
+Thanks for taking the time to look at this project! 
+
+- Alasdair Schmidt
+
+
+
+
+
+
+
